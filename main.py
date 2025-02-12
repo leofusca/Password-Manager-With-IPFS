@@ -3,10 +3,47 @@
 import hashlib
 import random
 import base64
+import os
+import re
+import string
 from cryptography.fernet import Fernet
+
+#---------------------------------------------------------------------------------------------------------------------------------#
+
+#---------------------------------------------------------------------------------------------------------------------------------#
+
+#FILE CHECKER:
+#check files.
+
+def ensure_file_exists(file_name):
+    if not os.path.exists(file_name):
+        with open(file_name, "w") as file:
+            pass
+
+#Wordlist creation and check
+def generate_random_word(length = 8):
+    return "".join(random.choice(string.ascii_lowercase) for _ in range (length))
+
+def crete_random_wordlist(file_name, num_words=2048):
+    with open(file_name, "w") as file:
+        for _ in range(num_words):
+            word = generate_random_word(random.randint(4, 8))
+            file.write(word + "\n")
+    print(f"Wordlist generated with {num_words} words.")
+
+
+def ensure_wordlist_exist(file_name = "wordlist.txt"):
+    if not os.path.exists(file_name):
+        print(f"{file_name} not found.Generating a random wordlist ...")
+        crete_random_wordlist(file_name)
+    else:
+        print(f"{file_name} already exists.")
+
+#-----------------------------------------------------------------------------------------------------------------------------------#
 
 
 #-----------------------------------------------------------------------------------------------------------------------------------#
+
 #SEED PHRASE FUNCTIONS:
 
 # Function to load the word list from a file
@@ -35,22 +72,45 @@ def hash_the_seed_phrase(seed_phrase):
     return hashed_seed
 
 def store_hashed_seed(hashed_seed):
+
+    #Create if there isnt.
+    if not os.path.exists("hashed_seed.txt"):
+        with open("hashed_seed.txt","w") as file:
+            file.write("")    
+
     with open("hashed_seed.txt", "w") as file:
         file.write(hashed_seed)
     print(f"Stored hashed seed: {hashed_seed}")  # For debugging
 
 
 # Function to check if the entered seed matches the stored hash
-def check_seed_phrase(entered_seed):
+def check_seed_phrase(entered_seed, max_attempts = 3):
     hashed_entered_seed = hash_the_seed_phrase(entered_seed)
+
     with open("hashed_seed.txt", "r") as file:
         stored_hash = file.read().strip()
-    print(f"Entered hash: {hashed_entered_seed}")  # For debugging
-    print(f"Stored hash: {stored_hash}")  # For debugging
-    return hashed_entered_seed == stored_hash
-#---------------------------------------------------------------------------------------------------------------------------------------#
+
+        attempts = 0
+
+        while attempts < max_attempts:
+            if hashed_entered_seed == stored_hash:
+                return True
+            else:
+                attempts += 1
+                print(f"Incorrect seed phrase. Attempts remaining: {max_attempts - attempts}")
+                
+                if attempts < max_attempts:
+                    entered_seed = input("Re-enter your seed phrase: ")
+                    hashed_entered_seed = hash_the_seed_phrase(entered_seed)
+
+    print("Too many failed attmepts. Exiting ...")
+    return False
 
 #---------------------------------------------------------------------------------------------------------------------------------------#
+
+
+#---------------------------------------------------------------------------------------------------------------------------------------#
+
 #PASSWORDS-ACCOUNTS-WEBSITE FUNCTIONS:
 
 def get_user_account():
@@ -64,8 +124,32 @@ def get_user_identifier():
     
 
 def get_user_password():
-    password = input(f"Enter your password:")
-    return password
+    while True:        
+        password = input(f"Enter your password:")
+        is_valid, message = validate_password_strenght(password)
+        if is_valid:
+            return password
+        else: 
+            print("Invalid password")
+    
+
+def validate_password_strenght(password):
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search("[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter."
+    if not re.search("[a-z]", password):
+        return False, "Password must contain at least one lowercase letter."
+    if not re.search("[0-9]", password):
+        return False, "Password must contain at least one digit."
+    if not re.search("[!@#$%^&*(),.?\":{}|<>]", password):
+        return False, "Password must contain at least one special character."
+    return True, "Password is strong."
+    
+
+
+
+#HASHING & ENCRYPTION FUNCTIONS
 
 #Hash identifier
 def hash_user_identifier(identifier, seed_phrase):
@@ -93,12 +177,47 @@ def decrypt_data(encrypted_data, key):
     fernet = Fernet(key)
     return fernet.decrypt(encrypted_data).decode()
 
-def store_encrypted_data():
-    
-    pass
-    
-  
+def store_encrypted_data(identifier, account, password, key):
 
+    encrypted_identifier = encrypt_data(identifier, key)
+    encrypted_account = encrypt_data(account, key)
+    encrypted_password = encrypt_data(password, key)
+
+    #Create if there isnt 
+    if not os.path.exists("accounts.txt"):
+        with open("accounts.txt","w") as file:
+            file.write("")
+
+    with open ("accounts.txt", "a") as file:
+        file.write(f"{encrypted_identifier.decode()}|{encrypted_account.decode()}|{encrypted_password.decode()}\n")
+    print("Account data stored securely.")
+    
+def retrieve_and_decrypt_data(key):
+    try:
+        with open("accounts.txt","r") as file:
+            
+            lines = file.readlines()
+
+            accounts = []
+
+            for line in lines:
+
+                encrypted_identifier, encrypted_account, encrypted_password = line.strip().split("|")
+
+                identifier = decrypt_data(encrypted_identifier.encode(), key)
+                account = decrypt_data(encrypted_account.encode(), key)
+                password = decrypt_data(encrypted_password.encode(), key)
+
+                accounts.append((identifier, account, password))
+
+            return accounts
+
+    except FileNotFoundError:
+        print("No accounts found")
+        return []
+
+#---------------------------------------------------------------------------------------------------------------------------------------#
+       
 
 #---------------------------------------------------------------------------------------------------------------------------------------#
 def main():
@@ -133,26 +252,58 @@ def main():
         if check_seed_phrase(seed_phrase):
             print("Authentication successful!")
         else:
-            print("Authentication failed. Invalid seed phrase.")
+            print("Authentication failed. Exiting ...")
+            return
 
         #ONCE AUTHENTICATED.
         running = True
 
         while running:
+
+            #Checkers
+
+            ensure_file_exists("hashed_seed.txt")
+            ensure_file_exists("accounts.txt")
+            ensure_wordlist_exist("wordlist.txt")
+            
             #Progrm Commands
-            Action = input(f"If you want to add a new account and password enter: add.If you want to view your existing accouns or password enter: view.If you want to exit enter: exit")
+
+            Action = input(f"Enter [add] if you want to add a new account or password.Enter [view] if you want to view your existing accounts or passwords.Enter [exit] if you want to exit").strip().lower()
+            
             #ADD Mode:
             if Action.strip() == "add":
                 #ADD INPUTS:
-
+                #get inputs
                 identifier = get_user_identifier()
                 account = get_user_account()
-                passowrd = get_user_password()               
+                password = get_user_password()    
 
-                pass
+                #store data securely 
+                key = generate_encryption_key(seed_phrase)
+                store_encrypted_data(identifier, account, password, key)
+
+            
             #VIEW Mode
             elif Action.strip() == "view":
+
+                #Retrieve and display accounts
+                key = generate_encryption_key(seed_phrase)
+
+                accounts = retrieve_and_decrypt_data(key)
+
+                for identifier, account, password in accounts:
+                    print(f"Identifier:{identifier} | Account:{account} | Password:{password}")
+                
+                else:
+                    print("No accounts founds.")
+
+
+
+
+
+
                 pass
+            
             #EXIT MODE
             elif Action.strip() == "exit":
                 running = False
